@@ -62,30 +62,30 @@ struct cudaDataTypeMap<uint32_t> {
   static constexpr cublasComputeType_t compute = CUBLAS_COMPUTE_32I;
 };
 
-//pair类型
-template<>
-struct cudaDataTypeMap<__half2> {
-  static constexpr cudaDataType_t type = CUDA_C_16F;
-  static constexpr cublasComputeType_t compute = CUBLAS_COMPUTE_32F_FAST_16F;
-};
+// //pair类型
+// template<>
+// struct cudaDataTypeMap<__half2> {
+//   static constexpr cudaDataType_t type = CUDA_C_16F;
+//   static constexpr cublasComputeType_t compute = CUBLAS_COMPUTE_32F_FAST_16F;
+// };
 
-template<>
-struct cudaDataTypeMap<__nv_bfloat162> {
-  static constexpr cudaDataType_t type = CUDA_C_16BF;
-  static constexpr cublasComputeType_t compute = CUBLAS_COMPUTE_32F_FAST_16BF;
-};
-//虚数类型
-template<>
-struct cudaDataTypeMap<cuComplex> {
-  static constexpr cudaDataType_t type = CUDA_C_32F;
-  static constexpr cublasComputeType_t compute = CUBLAS_COMPUTE_32F;
-};
+// template<>
+// struct cudaDataTypeMap<__nv_bfloat162> {
+//   static constexpr cudaDataType_t type = CUDA_C_16BF;
+//   static constexpr cublasComputeType_t compute = CUBLAS_COMPUTE_32F_FAST_16BF;
+// };
+// //虚数类型
+// template<>
+// struct cudaDataTypeMap<cuComplex> {
+//   static constexpr cudaDataType_t type = CUDA_C_32F;
+//   static constexpr cublasComputeType_t compute = CUBLAS_COMPUTE_32F;
+// };
 
-template<>
-struct cudaDataTypeMap<cuDoubleComplex> {
-  static constexpr cudaDataType_t type = CUDA_C_64F;
-  static constexpr cublasComputeType_t compute = CUBLAS_COMPUTE_64F;
-};
+// template<>
+// struct cudaDataTypeMap<cuDoubleComplex> {
+//   static constexpr cudaDataType_t type = CUDA_C_64F;
+//   static constexpr cublasComputeType_t compute = CUBLAS_COMPUTE_64F;
+// };
 
 
 
@@ -165,6 +165,40 @@ void randomize_matrix(T *mat, int N) {
       mat[i] = static_cast<T>(real);
     }
   }
+}
+
+template<typename T>
+bool verify_matrix(T *matRef, T *matOut, int N) {
+  double diff = 0.0;
+  int i;
+  for (i = 0; i < N; i++) {
+    diff = std::fabs(double(matRef[i]) - double(matOut[i]));
+    if (isnan(diff) || diff > 0.01) {
+      printf("Divergence! Should %5.2f, Is %5.2f (Diff %5.2f) at %d\n",
+             matRef[i], matOut[i], diff, i);
+      return false;
+    }
+  }
+  return true;
+}
+
+template<typename T>
+void print_matrix(const T *A, int M, int N, std::ofstream &fs) {
+  int i;
+  fs << std::setprecision(2)
+     << std::fixed; // Set floating-point precision and fixed notation
+  fs << "[";
+  for (i = 0; i < M * N; i++) {
+    if ((i + 1) % N == 0)
+      fs << std::setw(5) << A[i]; // Set field width and write the value
+    else
+      fs << std::setw(5) << A[i] << ", ";
+    if ((i + 1) % N == 0) {
+      if (i + 1 < M * N)
+        fs << ";\n";
+    }
+  }
+  fs << "]\n";
 }
 
 template<typename T>

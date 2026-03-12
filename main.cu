@@ -22,10 +22,6 @@ int main(int argc, char **argv) {
 
   // get data type
   std::string data_type = argv[2];
-  if (data_type != "float" && data_type != "double") {
-    std::cerr << "Please enter a valid data type (float or double)" << std::endl;
-    exit(EXIT_FAILURE);
-  }
 
   // get environment variable for device
   int deviceIdx = 0; // gpu id, device指gpu

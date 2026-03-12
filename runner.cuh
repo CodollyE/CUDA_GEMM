@@ -8,8 +8,18 @@
 #include <time.h>
 #include <unistd.h>
 
-void cudaCheck(cudaError_t error, const char *file,
-               int line); // CUDA error check
+#define cudaCheck(call) cuda_check((call), __FILE__, __LINE__)
+
+inline void cuda_check(cudaError_t err, const char *file, int line) {
+  if (err != cudaSuccess) {
+    printf("CUDA error at %s:%d: %s\n", file, line,
+            cudaGetErrorString(err));
+    exit(EXIT_FAILURE);
+  }
+}
+
+template<typename T>
+void runner(int kernel_num); // The main function to run the kernel and test
 void CudaDeviceInfo();    // print CUDA information
 
 void range_init_matrix(float *mat, int N);

@@ -1,8 +1,11 @@
 // #include "kernel.cuh"
 #include "runner.cuh"
-#include <cmath>
+#include <iostream>
 #include <cstdio>
-#include <fstream>
+#include <cstdlib>
+#include <ctime>
+#include <vector>
+#include <cmath>
 #include <iomanip>
 #include <cuComplex.h>
 #include <cuda_fp16.h>
@@ -10,6 +13,8 @@
 #include <cuComplex.h>
 #include <cublas_v2.h>
 #include <type_traits>
+
+// #define cudaCheck(err) (cudaCheck(err, __FILE__, __LINE__))
 
 // 类型转换映射： c++ -> cudaDataType
 template<typename T> struct cudaDataTypeMap;
@@ -89,13 +94,7 @@ struct cudaDataTypeMap<uint32_t> {
 
 
 
-void cudaCheck(cudaError_t err, const char *file, int line) {
-  if (err != cudaSuccess) {
-    printf("CUDA error at %s:%d: %s\n", file, line,
-            cudaGetErrorString(err));
-    exit(EXIT_FAILURE);
-  }
-}
+
 
 void CudaDeviceInfo() {
   int deviceId;
@@ -126,6 +125,145 @@ void CudaDeviceInfo() {
          props.sharedMemPerMultiprocessor / 1024, props.totalConstMem / 1024,
          props.multiProcessorCount, props.warpSize);
 };
+
+template<typename T>
+void runner(int kernel_num){
+  const std::string errLogFile = "matrixValidationFailure.txt"; // log file
+  
+  // Declare the handle, create the handle, cublasCreate will return a value of
+  // type cublasStatus_t to determine whether the handle was created
+  // successfully (the value is 0)
+  cublasHandle_t handle;
+  if (cublasCreate(&handle)) {
+    std::cerr << "Create cublas handle error." << std::endl;
+    exit(EXIT_FAILURE);
+  };
+
+  // Using cudaEvent for gpu stream timing, cudaEvent is equivalent to
+  // publishing event tasks in the target stream
+  float elapsed_time;
+  cudaEvent_t beg, end;
+  cudaEventCreate(&beg);
+  cudaEventCreate(&end);
+
+  // cuBLAS FLOPs ceiling is reached at 8192
+  std::vector<int> SIZE = {128, 256, 512, 1024, 2048, 4096};
+
+  long m, n, k, max_size;
+  max_size = SIZE[SIZE.size() - 1];
+  std::cout << "Max size: " << max_size << std::endl;
+
+  float alpha = 0.5, beta = 3.0; // GEMM input parameters, C=α*AB+β*C
+
+  // Host and device pointers (opaque, choose element size and cuBLAS types at runtime)
+  T *A = nullptr, *B = nullptr, *C = nullptr, *C_ref = nullptr; // host
+  T *dA = nullptr, *dB = nullptr, *dC = nullptr, *dC_ref = nullptr; // device
+
+  size_t type_size = sizeof(T);
+
+  // allocate host and device buffers using the chosen type_size
+  size_t total_elems = static_cast<size_t>(max_size) * static_cast<size_t>(max_size);
+  size_t total_bytes = type_size * total_elems;
+
+  // host allocations
+  A = static_cast<T *>(malloc(total_bytes));
+  B = static_cast<T *>(malloc(total_bytes));
+  C = static_cast<T *>(malloc(total_bytes));
+  C_ref = static_cast<T *>(malloc(total_bytes));
+
+  // device allocations
+  cudaCheck(cudaMalloc(&dA, total_bytes));
+  cudaCheck(cudaMalloc(&dB, total_bytes));
+  cudaCheck(cudaMalloc(&dC, total_bytes));
+  cudaCheck(cudaMalloc(&dC_ref, total_bytes));
+  
+  // randomize host matrices
+  randomize_matrix(A, total_elems);
+  randomize_matrix(B, total_elems);
+  randomize_matrix(C, total_elems);
+
+  // copy host -> device
+  cudaCheck(cudaMemcpy(dA, A, total_bytes, cudaMemcpyHostToDevice));
+  cudaCheck(cudaMemcpy(dB, B, total_bytes, cudaMemcpyHostToDevice));
+  cudaCheck(cudaMemcpy(dC, C, total_bytes, cudaMemcpyHostToDevice));
+  cudaCheck(cudaMemcpy(dC_ref, C_ref, total_bytes, cudaMemcpyHostToDevice));
+
+  int repeat_times = 50;
+  for (int size : SIZE) {
+    m = n = k = size;
+
+    std::cout << "dimensions(m=n=k) " << m << ", alpha: " << alpha
+              << ", beta: " << beta << std::endl;
+    // Verify the correctness of the calculation, and execute it once before the
+    // kernel function timing to avoid cold start errors
+    if (kernel_num != 0) {
+      run_kernel(0, m, n, k, alpha, dA, dB, beta, dC_ref,
+                 handle); // cuBLAS
+      run_kernel(kernel_num, m, n, k, alpha, dA, dB, beta, dC,
+                 handle); // Executes the kernel, modifies the result matrix
+      cudaCheck(cudaDeviceSynchronize());
+      cudaCheck(cudaGetLastError()); // Check for async errors during kernel run
+      cudaMemcpy(C, dC, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
+      cudaMemcpy(C_ref, dC_ref, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
+
+      if (!verify_matrix(C_ref, C, m * n)) {
+        std::cout
+            << "Failed to pass the correctness verification against NVIDIA "
+               "cuBLAS."
+            << std::endl;
+        if (m <= 128) {
+          std::cout << " Logging faulty output into " << errLogFile << "\n";
+          std::ofstream fs;
+          fs.open(errLogFile);
+          fs << "A:\n";
+          print_matrix(A, m, n, fs);
+          fs << "B:\n";
+          print_matrix(B, m, n, fs);
+          fs << "C:\n";
+          print_matrix(C, m, n, fs);
+          fs << "Should:\n";
+          print_matrix(C_ref, m, n, fs);
+        }
+        exit(EXIT_FAILURE);
+      }
+    }
+
+    cudaEventRecord(beg);
+    for (int j = 0; j < repeat_times; j++) {
+      // We don't reset dC between runs to save time
+      run_kernel(kernel_num, m, n, k, alpha, dA, dB, beta, dC, handle);
+    }
+    cudaEventRecord(end);
+    cudaEventSynchronize(beg);
+    cudaEventSynchronize(end);
+    cudaEventElapsedTime(&elapsed_time, beg, end);
+    elapsed_time /= 1000.; // Convert to seconds
+
+    long flops = 2 * m * n * k;
+    printf(
+        "Average elapsed time: (%7.6f) s, performance: (%7.1f) GFLOPS. size: "
+        "(%ld).\n",
+        elapsed_time / repeat_times,
+        (repeat_times * flops * 1e-9) / elapsed_time, m);
+    fflush(stdout);
+    // make dC and dC_ref equal again (we modified dC while calling our kernel
+    // for benchmarking)
+    cudaCheck(cudaMemcpy(dC, dC_ref, sizeof(float) * m * n,
+                         cudaMemcpyDeviceToDevice));
+  }
+
+  // Free up CPU and GPU space
+  free(A);
+  free(B);
+  free(C);
+  free(C_ref);
+  cudaFree(dA);
+  cudaFree(dB);
+  cudaFree(dC);
+  cudaFree(dC_ref);
+  cublasDestroy(handle);
+
+}
 
 template<typename T>
 void randomize_matrix(T *mat, int N) {

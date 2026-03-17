@@ -18,6 +18,7 @@
 #include "kernels/1_naive.cuh"
 #include "kernels/2_smem_naive.cuh"
 #include "kernels/3_smem_1D_tiling.cuh"
+#include "kernels/4_smem_2D_tiling.cuh"
 
 #define cudaCheck(call) cuda_check((call), __FILE__, __LINE__)
 
@@ -218,6 +219,23 @@ void run_smem_1D_tiling(int M, int N, int K, T alpha, T *A, T *B,
 
 
 template<typename T>
+void run_smem_2D_tiling(int M, int N, int K, T alpha, T *A, T *B,
+                     T beta, T *C) {
+  // size of tile
+  constexpr size_t TILE_M = 64;
+  constexpr size_t TILE_K = 8;
+  constexpr size_t TILE_N = 64;
+  // size of item per thread
+  constexpr size_t THREAD_M = 8;
+  constexpr size_t THREAD_N = 8;
+
+  dim3 block((TILE_M * TILE_N) / (THREAD_M * THREAD_N));
+  dim3 grid((N + TILE_N - 1) / TILE_N, (M + TILE_M - 1) / TILE_M);
+  smem_2D_tiling<T, TILE_M, TILE_N, TILE_K, THREAD_M, THREAD_N><<<grid, block>>>(M, N, K, alpha, A, B, beta, C);
+}
+
+
+template<typename T>
 void run_kernel(int kernel_num, int M, int N, int K, T alpha, T *A,
                 T *B, T beta, T *C, cublasHandle_t handle){
   switch (kernel_num) {
@@ -233,6 +251,8 @@ void run_kernel(int kernel_num, int M, int N, int K, T alpha, T *A,
     case 3:
       run_smem_1D_tiling(M, N, K, alpha, A, B, beta, C);
       break;
+    case 4:
+      run_smem_2D_tiling(M, N, K, alpha, A, B, beta, C);
     }
 }
 

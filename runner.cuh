@@ -239,11 +239,11 @@ template<typename T>
 void run_smem_2D_tiling_tranpose(int M, int N, int K, T alpha, T *A, T *B,
                      T beta, T *C) {
   // size of tile
-  constexpr size_t TILE_M = 64;
-  constexpr size_t TILE_K = 8;
-  constexpr size_t TILE_N = 64;
+  constexpr size_t TILE_M = 128;
+  constexpr size_t TILE_K = 16;
+  constexpr size_t TILE_N = 128;
   // size of item per thread
-  constexpr size_t THREAD_M = 8;
+  constexpr size_t THREAD_M = 16;
   constexpr size_t THREAD_N = 8;
 
   dim3 block((TILE_M * TILE_N) / (THREAD_M * THREAD_N));
